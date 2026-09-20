@@ -1,0 +1,14 @@
+{
+  "name": "tel-lang",
+  "version": "0.1.0",
+  "description": "Tel — a token-efficient language for AI. One language for backend, frontend, and everything in between.",
+  "type": "module",
+  "bin": { "tel": "bin/tel.mjs" },
+  "scripts": {
+    "test": "node --test test/",
+    "repl": "node bin/tel.mjs repl",
+    "examples": "node bin/tel.mjs run examples/tour.tel"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}
