@@ -574,7 +574,8 @@ or `import "./util.tel" {helper, Point} as util`. Paths are resolved relative
 to the importing file. With no alias, a named list binds exports directly.
 
 **JS/npm modules** (any other specifier, resolved by Node): `import "express"
-as express`, `import "node:fs" {readFileSync} as fs`. A runnable Node-builtin
+as express`, `import "node:path" * as ns`, `import "node:fs" {readFileSync} as
+fs`. A runnable Node-builtin
 ```tel
 import "node:path" as path
 import "node:fs" {readFileSync} as fs
@@ -582,9 +583,10 @@ p = path.join("package.json")
 print(fs.existsSync(p), path.basename(p), readFileSync(p, "utf8").len() > 0)
 ```
 
-A JS/default alias binds `mod.default ?? mod`; extra named exports are
-hydrated onto the alias object as well, so CJS-style defaults work. Named
-binding lists bind exports directly. Bare specifiers are resolved relative to
+A JS/default alias (`as x`) binds `mod.default ?? mod`; extra named exports are
+hydrated onto the alias object as well, so CJS-style defaults work. The
+namespace-star form (`* as ns`) binds the module namespace directly and keeps
+its real typings in `--target ts`. Named binding lists bind exports directly. Bare specifiers are resolved relative to
 the importing file with `createRequire`, then imported dynamically; `node:`
 schemes and relative/absolute paths work without installation, npm packages
 must be installed in `node_modules`.
@@ -724,6 +726,8 @@ import awareness). `tel check --tsc` also runs `tsc` when it is installed.
 - `import "spec" as x` binds `mod.default ?? mod`; when the default is an
   object/function, named exports are copied onto it; `__ns` is set so member
   calls dispatch directly. `import "spec" {a, b}` binds named exports.
+  `import "spec" * as ns` binds the real module namespace (typed in
+  `--target ts`).
 - Native JS prototype methods work on class instances (`m.get(k)`,
   `d.toISOString()`, `url.toString()`). Tel core methods win for List, Str,
   Record, Range, and Sum values.
@@ -752,30 +756,25 @@ reported so agent-generated code can avoid them.
    the first positional argument; they are intended for record/union
    constructors. Example: `fn f(a, b)` called `f(b=2, a=1)` receives
    `{b: 2, a: 1}` as `a` and `nil` as `b`.
-2. A record constructed with named arguments receives the JS closure name as
-   its `__t` tag, so `Point(x=1) is Point` is currently false while
-   `Point(1)` is true. Method dispatch still works through the global UFCS
-   fallback, but typed-method lookup is not used for named-argument records.
-3. Namespace-star imports (`import "pkg" * as ns`) are not parsed yet in the
-   interpreter; use `import "pkg" as ns` or named imports.
-4. `_` is only a lambda inside call arguments and comprehension values; using
-   it elsewhere raises "`_` is only valid as a shorthand lambda argument".
-5. `spawn` is a prefix keyword, not a function: write `spawn work()`. The JS
+2. `_` is only a lambda inside call arguments; using it elsewhere raises
+   "`_` is only valid as a shorthand lambda argument". In patterns it is the
+   wildcard.
+3. `spawn` is a prefix keyword, not a function: write `spawn work()`. The JS
    function-call spelling `spawn(...)` groups the expression.
-6. `match` has no exhaustiveness checking; a non-matching subject raises
+4. `match` has no exhaustiveness checking; a non-matching subject raises
    `match: no arm matched <value>`.
-7. Type annotations and generics are not enforced by the interpreter; they are
+5. Type annotations and generics are not enforced by the interpreter; they are
    metadata for `--target ts` and `tel check`.
-8. Map-comprehension keys are literal identifiers or string literals only;
+6. Map-comprehension keys are literal identifiers or string literals only;
    computed keys (`[expr]: v`) are not supported.
-9. There are no classes, traits, interfaces, macros, JSX, or operator
+7. There are no classes, traits, interfaces, macros, JSX, or operator
    overloading. Use records + functions, or JS/npm classes via import/`new`.
-10. `if` is a statement, not an expression; the conditional expression form is
-    `then if cond else other`. A trailing `if`/`match` statement in a function
-    body still yields its value.
-11. `String` slice bounds are clamped by JS semantics; out-of-range numeric
-    indices return `nil` (or `undefined`) rather than raising.
-12. Static `tel check` cannot see through dynamic JS imports; interop-heavy
+8. `if` is a statement, not an expression; the conditional expression form is
+   `then if cond else other`. A trailing `if`/`match` statement in a function
+   body still yields its value.
+9. `String` slice bounds are clamped by JS semantics; out-of-range numeric
+   indices return `nil` (or `undefined`) rather than raising.
+10. Static `tel check` cannot see through dynamic JS imports; interop-heavy
     code may need `Any` annotations.
 
 ## 13. Grammar sketch
