@@ -143,11 +143,12 @@ Tel modules: `import "./util.tel" as util`, `import "./util.tel" {f} as util`.
 `pub fn`/`pub type` control exports; with no `pub`, all top-level names export.
 Std: `import std.http as http`, `import std.{json, math}`. npm uses the same
 form (`import "express" as express`; package must be installed) and named JS
-imports are `import "node:fs" {readFileSync} as fs`. Tel lambdas are JS arrows,
+imports are `import "node:fs" {readFileSync} as fs`. `import "node:path" * as ns`
+binds the real namespace and keeps its typings in `--target ts`. Tel lambdas are JS arrows,
 so they pass as callbacks; `await` works on Promises, including top level.
 Records/arrays/tuples are plain JS values; sums are `{__tag,__v,__t}`.
-`--target ts` keeps real typings for named/namespace JS imports; a default
-alias (`as x`) is typed `any` with namespace hydration.
+`--target ts` keeps real typings for named and `* as` namespace JS imports; a
+default alias (`as x`) is typed `any` with namespace hydration.
 
 ## Stdlib cheatsheet
 
