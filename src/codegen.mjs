@@ -325,6 +325,8 @@ class Emitter {
     const prelude = buildPrelude(this.platformTarget);
     if (this.target === 'ts') {
       this.w(`import { __ } from ${JSON.stringify(this.opts.runtimeModule || './tel_runtime.ts')};`);
+      this.w('type $TelResult<T = any> = { __tag: "Ok"; __v: [T]; __t: "Result" } | { __tag: "Err"; __v: [any]; __t: "Result" };');
+      this.w('type $TelTask<T = any> = Promise<T>;');
       this.emitImports();
       this.emitTypeDecls();
       this.emitFns();
@@ -419,7 +421,9 @@ class Emitter {
   }
 
   emitModuleVars() {
-    if (this.moduleVars.length) this.w(`let ${this.moduleVars.join(', ')};`);
+    if (!this.moduleVars.length) return;
+    const list = this.target === 'ts' ? this.moduleVars.map((n) => `${n}: any`) : this.moduleVars;
+    this.w(`let ${list.join(', ')};`);
   }
 
   emitProgramStatements() {
@@ -445,29 +449,40 @@ class Emitter {
   }
 
   emitBootstrap() {
+    const hasMain = this.moduleFns.has('main');
+    const hasApp = this.moduleFns.has('App');
     const isWeb = this.platformTarget === 'web';
+    const ann = this.target === 'ts' ? ': any' : '';
     if (isWeb) {
-      this.w(`if (typeof document !== "undefined") {`);
+      if (!hasMain && !hasApp) return;
+      this.w('if (typeof document !== "undefined") {');
       this.indent++;
-      this.w(`if (typeof main === "function") { Promise.resolve(main()).catch((e) => console.error(e && e.stack ? e.stack : String(e))); }`);
-      this.w(`else if (typeof App === "function") { __.mount(App, "#app"); }`);
+      if (hasMain) {
+        this.w(`if (typeof main === "function") { Promise.resolve(main()).catch((e${ann}) => console.error(e && e.stack ? e.stack : String(e))); }`);
+      }
+      if (hasApp) {
+        this.w(`${hasMain ? 'else ' : ''}if (typeof App === "function") { __.mount(App, "#app"); }`);
+      }
       this.indent--;
-      this.w(`}`);
+      this.w('}');
       return;
     }
-    this.w(`if (typeof main === "function") {`);
+    if (!hasMain) return;
+    const procExpr = this.target === 'ts' ? '(globalThis as any).process' : 'globalThis.process';
+    this.w('if (typeof main === "function") {');
     this.indent++;
-    this.w(`const $r = main(__.args);`);
-    this.w(`if ($r && typeof $r.then === "function") {`);
+    const mainDecl = this.moduleFns.get('main');
+    const hasParam = !!(mainDecl && mainDecl.params && mainDecl.params.length);
+    this.w(`const $r = main(${hasParam ? '__.args' : ''});`);
+    this.w('if ($r && typeof $r.then === "function") {');
     this.indent++;
-    this.w(`$r.then((v) => { if (v !== null && v !== undefined && (typeof v === "string" || typeof v === "number" || typeof v === "boolean")) console.log(__.str(v)); })`);
+    this.w(`$r.then((v${ann}) => { if (v !== null && v !== undefined && (typeof v === "string" || typeof v === "number" || typeof v === "boolean")) console.log(__.str(v)); })`);
     this.indent++;
-    this.w(`.catch((e) => { console.error(e && e.stack ? e.stack : String(e)); if (typeof process !== "undefined") process.exitCode = 1; });`);
-    this.indent--;
-    this.indent--;
+    this.w(`.catch((e${ann}) => { console.error(e && e.stack ? e.stack : String(e)); const $proc = ${procExpr}; if ($proc) $proc.exitCode = 1; });`);
+    this.indent -= 2;
     this.w(`} else if ($r !== null && $r !== undefined && (typeof $r === "string" || typeof $r === "number" || typeof $r === "boolean")) console.log(__.str($r));`);
     this.indent--;
-    this.w(`}`);
+    this.w('}');
   }
 
   // --- statements ----------------------------------------------------------
@@ -791,7 +806,13 @@ class Emitter {
     if (!t) return 'any';
     switch (t.type) {
       case 'TypeName': {
-        const map = { Num: 'number', Int: 'number', Str: 'string', Bool: 'boolean', Nil: 'null', Any: 'any', Void: 'void', Never: 'never' };
+        const map = {
+          Num: 'number', Int: 'number', Str: 'string', Bool: 'boolean', Nil: 'null',
+          Any: 'any', Void: 'void', Never: 'never', Error: 'Error',
+          Result: '$TelResult', Task: '$TelTask',
+          List: 'any[]', Tuple: 'any[]', Record: 'Record<string, any>', Map: 'Record<string, any>',
+          Fn: '(...args: any[]) => any',
+        };
         if (map[t.name]) return map[t.name];
         return t.name + (t.args && t.args.length ? `<${t.args.map((x) => this.tsType(x)).join(', ')}>` : '');
       }
@@ -801,7 +822,7 @@ class Emitter {
       case 'TypeRecord': return `{ ${t.fields.map((f) => `${jsKey(f.name)}${f.ann ? ': ' + this.tsType(f.ann) : ': any'}`).join('; ')} }`;
       case 'TypeTuple': return `[${t.items.map((x) => this.tsType(x)).join(', ')}]`;
       case 'TypeMap': return `Record<${this.tsType(t.key)}, ${this.tsType(t.value)}>`;
-      case 'TypeFn': return `(${t.params.map((x) => this.tsType(x)).join(', ')}) => ${this.tsType(t.ret)}`;
+      case 'TypeFn': return `(${t.params.map((x, i) => `arg${i}: ${this.tsType(x)}`).join(', ')}) => ${this.tsType(t.ret)}`;
       default: return 'any';
     }
   }
@@ -834,18 +855,20 @@ class Emitter {
 
   emitRecordCtor(st) {
     const fields = st.fields.map((f) => f.name);
+    const gen = this.target === 'ts' && st.generics && st.generics.length ? `<${st.generics.join(', ')}>` : '';
+    const ret = `${st.name}${gen}`;
     if (this.target === 'ts') {
       const positional = st.fields.map((f) => `${f.name}: ${this.tsType(f.ann)}`).join(', ');
       const named = `{ ${st.fields.map((f) => `${jsKey(f.name)}?: ${this.tsType(f.ann)}`).join('; ')} }`;
-      this.w(`function ${st.name}(${positional || ''}): ${st.name};`);
-      this.w(`function ${st.name}(o: ${named}): ${st.name};`);
+      this.w(`function ${st.name}${gen}(${positional || ''}): ${ret};`);
+      this.w(`function ${st.name}${gen}(o: ${named}): ${ret};`);
     }
-    this.w(`function ${st.name}(...$args${this.target === 'ts' ? ': any[]' : ''})${this.target === 'ts' ? `: ${st.name}` : ''} {`);
+    this.w(`function ${st.name}${gen}(...$args${this.target === 'ts' ? ': any[]' : ''})${this.target === 'ts' ? `: ${ret}` : ''} {`);
     this.indent++;
     this.w(`const $a = $args[0];`);
     if (fields.length) {
       this.w(`const $named = $a !== null && typeof $a === "object" && !Array.isArray($a) && !__.isSum($a) && (${fields.map((f) => JSON.stringify(f) + ' in $a').join(' || ')});`);
-      this.w(`const $out = {};`);
+      this.w(this.target === 'ts' ? 'const $out: any = {};' : 'const $out = {};');
       fields.forEach((f, i) => this.w(`$out.${f} = $named ? ($a.${f} ?? null) : ($args[${i}] ?? null);`));
       this.w(`return __.rec(${JSON.stringify(st.name)}, $out);`);
     } else {
@@ -862,9 +885,14 @@ class Emitter {
         const cast = this.target === 'ts' ? ` as unknown as ${st.name}` : '';
         this.w(`const ${v.name} = __.unit(${JSON.stringify(st.name)}, ${JSON.stringify(v.name)})${cast};`);
       } else {
-        const cast = this.target === 'ts'
-          ? ` as unknown as (${v.fields.map((f) => `${f.name}: ${this.tsType(f.ann)}`).join(', ')}) => ${st.name}`
-          : '';
+        let cast = '';
+        if (this.target === 'ts') {
+          const g = st.generics && st.generics.length ? `<${st.generics.join(', ')}>` : '';
+          const ty = `${st.name}${g}`;
+          const positional = v.fields.map((f) => `${f.name}${f.default ? '?' : ''}: ${this.tsType(f.ann)}`).join(', ');
+          const named = v.fields.map((f) => `${jsKey(f.name)}?: ${this.tsType(f.ann)}`).join('; ');
+          cast = ` as unknown as { ${g}(${positional}): ${ty}; ${g}(o: { ${named} }): ${ty} }`;
+        }
         this.w(`const ${v.name} = __.variant(${JSON.stringify(st.name)}, ${JSON.stringify(v.name)}, [${fields.map((f) => JSON.stringify(f)).join(', ')}])${cast};`);
       }
     }
@@ -888,7 +916,7 @@ class Emitter {
     }
     const params = decl.params.map((p) => {
       let s = p.rest ? `...${p.name}` : p.name;
-      if (this.target === 'ts' && p.ann) s += `: ${this.tsType(p.ann)}`;
+      if (this.target === 'ts') s += p.ann ? (p.rest ? `: (${this.tsType(p.ann)})[]` : `: ${this.tsType(p.ann)}`) : (p.rest ? ': any[]' : ': any');
       if (p.default) s += ` = ${this.expr(p.default)}`;
       return s;
     });
@@ -911,11 +939,15 @@ class Emitter {
     if (signalState) this.signals.push(signalState);
     this.push(scope);
     try {
-      this.w(`${isAsync ? 'async ' : ''}function ${jsName}(${params.join(', ')})${retAnno} {`);
+      const generics = this.target === 'ts' && decl.generics && decl.generics.length ? `<${decl.generics.join(', ')}>` : '';
+      this.w(`${isAsync ? 'async ' : ''}function ${jsName}${generics}(${params.join(', ')})${retAnno} {`);
       this.indent++;
       this.w(`return __.${isAsync ? '__pa' : '__p'}(${isAsync ? 'async ' : ''}() => {`);
       this.indent++;
-      if (locals.length) this.w(`let ${locals.join(', ')};`);
+      if (locals.length) {
+        const list = this.target === 'ts' ? locals.map((n) => `${n}: any`) : locals;
+        this.w(`let ${list.join(', ')};`);
+      }
       this.emitBlockBody(decl.body.body, { tail: true });
       this.indent--;
       this.w('});');
@@ -951,7 +983,7 @@ class Emitter {
       case 'Lambda': {
         const params = e.params.map((p) => {
           let s = p.rest ? `...${p.name}` : p.name;
-          if (this.target === 'ts' && p.ann) s += `: ${this.tsType(p.ann)}`;
+          if (this.target === 'ts') s += p.ann ? (p.rest ? `: (${this.tsType(p.ann)})[]` : `: ${this.tsType(p.ann)}`) : (p.rest ? ': any[]' : ': any');
           if (p.default) s += ` = ${this.expr(p.default)}`;
           return s;
         }).join(', ');
@@ -1134,6 +1166,6 @@ export function compileRuntime(opts = {}) {
   const target = opts.target || 'js';
   const platform = target === 'ts' ? (opts.platform || 'node') : target;
   const prelude = buildPrelude(platform === 'web' ? 'web' : 'js');
-  if (target === 'ts') return '// @ts-nocheck\n' + prelude.code.replace(/^const __ = /m, 'export const __ = ');
+  if (target === 'ts') return '// @ts-nocheck\n' + prelude.code.replace(/^const __ = /m, 'export const __: any = ');
   return prelude.code;
 }

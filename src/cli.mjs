@@ -327,11 +327,21 @@ function runTsc(ctx) {
     ctx.stderr.write('check: --tsc: no tsconfig.json in cwd; skipped TypeScript check\n');
     return 0;
   }
-  const r = spawnSync('tsc', ['--noEmit', '--project', '.'], { cwd: ctx.cwd, stdio: 'inherit' });
-  if (r.error && r.error.code === 'ENOENT') {
-    ctx.stderr.write('check: --tsc: tsc not found on PATH; skipped TypeScript check\n');
+  const r = spawnSync('tsc', ['--noEmit', '--project', '.'], { cwd: ctx.cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (r.error) {
+    ctx.stderr.write(`check: --tsc: tsc could not run (${r.error.code || r.error.message}); skipped TypeScript check\n`);
     return 0;
   }
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  if (r.status === 0) {
+    if (out.trim()) ctx.stdout.write(out);
+    return 0;
+  }
+  if (/TS18003|No inputs were found/i.test(out)) {
+    ctx.stderr.write('check: --tsc: no TypeScript inputs found; skipped TypeScript check\n');
+    return 0;
+  }
+  if (out) ctx.stderr.write(out);
   return r.status ?? 1;
 }
 

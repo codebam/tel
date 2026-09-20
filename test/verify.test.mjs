@@ -63,7 +63,9 @@ function spawnNode(args, opts = {}) {
     encoding: 'utf8',
     timeout: opts.timeout ?? 20000,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...(opts.env ?? {}) },
+    // Normalize colorization: npm lifecycle sets FORCE_COLOR, and Node 26
+    // then colors console.log(number) output, which must not break stdout parity.
+    env: { ...process.env, FORCE_COLOR: '0', ...(opts.env ?? {}) },
   });
   return {
     status: r.status,
@@ -1646,11 +1648,11 @@ test('tokcount: TOKENS.md stdout-equivalence claims for benchmark programs', { t
     assert.equal(tel.status, 0, tel.stderr);
     const ts = runNodeFile(path.join(bench, `${name}.ts`), { timeout: 30000 });
     assert.equal(ts.status, 0, ts.stderr);
-    assert.equal(ts.stdout, tel.stdout, `${name}: Tel vs TS stdout`);
+    assert.equal(stripAnsi(ts.stdout), stripAnsi(tel.stdout), `${name}: Tel vs TS stdout`);
     if (hasPython) {
       const py = spawnSync('python3', [path.join(bench, `${name}.py`)], { encoding: 'utf8', timeout: 30000 });
       assert.equal(py.status, 0, py.stderr);
-      assert.equal(py.stdout, tel.stdout, `${name}: Tel vs Python stdout`);
+      assert.equal(stripAnsi(py.stdout), stripAnsi(tel.stdout), `${name}: Tel vs Python stdout`);
     }
   }
   for (const name of ['typed_pipeline', 'async_load', 'route']) {
@@ -1658,7 +1660,7 @@ test('tokcount: TOKENS.md stdout-equivalence claims for benchmark programs', { t
     assert.equal(tel.status, 0, tel.stderr);
     const ts = runNodeFile(path.join(bench, `${name}.ts`), { timeout: 30000 });
     assert.equal(ts.status, 0, ts.stderr);
-    assert.equal(ts.stdout, tel.stdout, `${name}: Tel vs TS stdout`);
+    assert.equal(stripAnsi(ts.stdout), stripAnsi(tel.stdout), `${name}: Tel vs TS stdout`);
   }
 });
 
