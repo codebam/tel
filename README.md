@@ -88,12 +88,25 @@ Requires **Node >= 22** for running `.ts` output directly (Node >= 20 works if
 you compile TypeScript with `tsc`). The toolchain has **zero npm dependencies**.
 
 ```bash
-git clone <this-repo> tel
+npm install -g @codebam/tel
+tel --version
+tel init
+```
+
+Or run it without installing:
+
+```bash
+npx --package @codebam/tel tel run app.tel
+npx --package @codebam/tel tel build app.tel --target ts --outdir out
+```
+
+From source:
+
+```bash
+git clone https://github.com/codebam/tel tel
 cd tel
 node bin/tel.mjs --version
-
-# optional: put `tel` on PATH
-npm link            # or: ln -s "$PWD/bin/tel.mjs" ~/.local/bin/tel
+npm link            # optional: puts `tel` on PATH
 ```
 
 ## Use it

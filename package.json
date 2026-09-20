@@ -1,14 +1,52 @@
 {
-  "name": "tel-lang",
-  "version": "0.1.0",
-  "description": "Tel — a token-efficient language for AI. One language for backend, frontend, and everything in between.",
+  "name": "@codebam/tel",
+  "version": "0.2.0",
+  "description": "Tel — a token-efficient language for AI, with a tree-walk interpreter and TypeScript/JavaScript/Web compilers.",
   "type": "module",
-  "bin": { "tel": "bin/tel.mjs" },
+  "bin": {
+    "tel": "bin/tel.mjs"
+  },
   "scripts": {
     "test": "node --test test/",
     "repl": "node bin/tel.mjs repl",
-    "examples": "node bin/tel.mjs run examples/tour.tel"
+    "examples": "node bin/tel.mjs run examples/tour.tel",
+    "prepublishOnly": "node --test test/"
   },
-  "engines": { "node": ">=20" },
-  "license": "MIT"
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "keywords": [
+    "language",
+    "compiler",
+    "interpreter",
+    "typescript",
+    "javascript",
+    "ai",
+    "llm",
+    "token-efficiency"
+  ],
+  "files": [
+    "bin/",
+    "src/",
+    "runtime/",
+    "tools/",
+    "docs/",
+    "examples/",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "author": "codebam",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codebam/tel.git"
+  },
+  "homepage": "https://github.com/codebam/tel#readme",
+  "bugs": {
+    "url": "https://github.com/codebam/tel/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
