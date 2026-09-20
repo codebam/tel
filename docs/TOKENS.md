@@ -78,13 +78,13 @@ cl100k tokens. Measured at the final revision:
 ```
 $ node tools/tokcount.mjs AGENTS.md docs/AGENT-GUIDE.md
 path                    chars     bytes    tokens
-AGENTS.md                6776      6776      2194
-docs/AGENT-GUIDE.md      6776      6776      2194
-total                   13552     13552      4388
+AGENTS.md                6673      6673      2164
+docs/AGENT-GUIDE.md      6673      6673      2164
+total                   13346     13346      4328
 ```
 
-`AGENTS.md` is an exact copy of `docs/AGENT-GUIDE.md`; both are 2194/2200
-tokens (99.7% of budget) and all 10 fenced `tel` snippets execute under
+`AGENTS.md` is an exact copy of `docs/AGENT-GUIDE.md`; both are 2164/2200
+tokens (98.4% of budget) and all 10 fenced `tel` snippets execute under
 `Runtime.runSource`.
 
 ## Exact commands
