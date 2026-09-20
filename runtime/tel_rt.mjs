@@ -16,6 +16,7 @@ export class Range {
     this.end = end;
     this.inclusive = inclusive;
     this.step = step;
+    this.__range = true;
   }
   *[Symbol.iterator]() {
     let s = this.step;
@@ -42,8 +43,8 @@ export const Nil = null;
 // --- structural equality ---------------------------------------------------
 export function eq(a, b) {
   if (Object.is(a, b)) return true;
-  if (a instanceof Sum || b instanceof Sum) {
-    if (!(a instanceof Sum && b instanceof Sum)) return false;
+  if (isSum(a) || isSum(b)) {
+    if (!(isSum(a) && isSum(b))) return false;
     if (a.__tag !== b.__tag || a.__v.length !== b.__v.length) return false;
     return a.__v.every((v, i) => eq(v, b.__v[i]));
   }
@@ -65,10 +66,11 @@ export function str(x) {
   if (typeof x === 'string') return x;
   if (typeof x === 'number') return String(x);
   if (typeof x === 'boolean') return x ? 'true' : 'false';
-  if (x instanceof Sum) return x.__v.length ? `${x.__tag}(${x.__v.map(str).join(', ')})` : x.__tag;
+  if (isSum(x)) return x.__v.length ? `${x.__tag}(${x.__v.map(str).join(', ')})` : x.__tag;
   if (Array.isArray(x)) return `[${x.map(str).join(', ')}]`;
-  if (x instanceof Range) return `${x.start}..${x.inclusive ? '=' : ''}${x.end}`;
+  if (x && x.__range) return `${x.start}..${x.inclusive ? '=' : ''}${x.end}`;
   if (typeof x === 'function') return '<fn>';
+  if (x instanceof Error) return x.message ? `${x.name}: ${x.message}` : x.name;
   return repr(x);
 }
 
@@ -76,10 +78,11 @@ export function repr(x) {
   if (x === null || x === undefined) return 'nil';
   if (typeof x === 'string') return JSON.stringify(x);
   if (typeof x === 'number' || typeof x === 'boolean') return String(x);
-  if (x instanceof Sum) return x.__v.length ? `${x.__tag}(${x.__v.map(repr).join(', ')})` : x.__tag;
+  if (isSum(x)) return x.__v.length ? `${x.__tag}(${x.__v.map(repr).join(', ')})` : x.__tag;
   if (Array.isArray(x)) return `[${x.map(repr).join(', ')}]`;
   if (x instanceof Range) return str(x);
   if (typeof x === 'function') return '<fn>';
+  if (x instanceof Error) return x.message ? `${x.name}: ${x.message}` : x.name;
   if (typeof x === 'object') {
     return `{${Object.entries(x).map(([k, v]) => `${k}: ${repr(v)}`).join(', ')}}`;
   }
@@ -87,6 +90,10 @@ export function repr(x) {
 }
 
 export function truthy(x) { return !(x === null || x === undefined || x === false); }
+
+// Cross-module safe Sum check: each compiled file inlines its own runtime copy,
+// so `instanceof` cannot be used between modules.
+export function isSum(x) { return x !== null && typeof x === 'object' && typeof x.__tag === 'string' && Array.isArray(x.__v); }
 
 export function add(a, b) {
   if (typeof a === 'string' || typeof b === 'string') return str(a) + str(b);
@@ -102,16 +109,25 @@ export function q(x) {
 }
 
 // Wrap a sync function so `expr?` early-returns its Err/Nil payload.
-export function p(fn) {
+export function __p(fn) {
   try { return fn(); } catch (e) { if (e instanceof Early) return e.value; throw e; }
 }
 
 // Async variant: also unwraps a returned promise *inside* the wrapper.
-export async function pa(fn) {
+export async function __pa(fn) {
   try { return await fn(); } catch (e) { if (e instanceof Early) return e.value; throw e; }
 }
 
 // `a ?? b`
+export function and(a, bf) { return truthy(a) ? bf() : a; }
+export function or(a, bf) { return truthy(a) ? a : bf(); }
+export function coalesce(a, bf) {
+  if (a === null || a === undefined) return bf();
+  if (isSum(a) && a.__tag === 'Err') return bf();
+  if (isSum(a) && a.__tag === 'Ok') return a.__v[0];
+  return a;
+}
+
 export function d(x, fallback) {
   if (x === null || x === undefined) return fallback;
   if (x instanceof Sum && x.__tag === 'Err') return fallback;
@@ -146,9 +162,9 @@ export function unit(type, tag) { return new Sum(tag, [], type); }
 
 export function typeName(x) {
   if (x === null || x === undefined) return 'Nil';
-  if (x instanceof Sum) return x.__t || x.__tag;
+  if (isSum(x)) return x.__t || x.__tag;
   if (Array.isArray(x)) return 'List';
-  if (x instanceof Range) return 'Range';
+  if (x && x.__range) return 'Range';
   const t = typeof x;
   if (t === 'string') return 'Str';
   if (t === 'number') return 'Num';
@@ -166,9 +182,9 @@ export function isType(x, name) {
   if (name === 'Num' || name === 'Int') return typeof x === 'number';
   if (name === 'List') return Array.isArray(x);
   if (name === 'Fn') return typeof x === 'function';
-  if (name === 'Range') return x instanceof Range;
-  if (name === 'Result') return x instanceof Sum && (x.__tag === 'Ok' || x.__tag === 'Err');
-  if (x instanceof Sum) return x.__t === name || x.__tag === name;
+  if (name === 'Range') return !!(x && x.__range);
+  if (name === 'Result') return isSum(x) && (x.__tag === 'Ok' || x.__tag === 'Err');
+  if (isSum(x)) return x.__t === name || x.__tag === name;
   return typeName(x) === name;
 }
 
@@ -179,10 +195,10 @@ export function range(start, end, inclusive = false, step = undefined) {
 
 export function iter(x) {
   if (x === null || x === undefined) throw new Error('cannot iterate nil');
-  if (x instanceof Range) return x;
   if (Array.isArray(x)) return x;
   if (typeof x === 'string') return x;
   if (typeof x[Symbol.iterator] === 'function') return x;
+  if (x && x.__range) return x;
   if (typeof x === 'object') return Object.keys(x);
   throw new Error(`cannot iterate ${typeName(x)}`);
 }
@@ -190,7 +206,7 @@ export function iter(x) {
 export function len(x) {
   if (x === null || x === undefined) return 0;
   if (typeof x === 'string' || Array.isArray(x)) return x.length;
-  if (x instanceof Range) return [...x].length;
+  if (x && x.__range) return [...x].length;
   if (typeof x === 'object') return Object.keys(x).length;
   return 0;
 }
@@ -238,7 +254,7 @@ export function unshift(x, ...vs) { x.unshift(...vs); return x; }
 // --- collection functions (also registered as UFCS methods) ---------------
 function toList(x) {
   if (Array.isArray(x)) return x;
-  if (x instanceof Range) return [...x];
+  if (x && x.__range) return [...x];
   if (typeof x === 'string') return [...x];
   return [...iter(x)];
 }
@@ -351,8 +367,11 @@ export function matchPat(v, p) {
       const subs = p[1], rest = p[2];
       if (v.length < subs.length) return null;
       const head = subs.map((sp, i) => matchPat(v[i], sp));
-      const tail = rest === null ? (v.length === subs.length ? {} : null) : [{ [rest]: v.slice(subs.length) }];
-      return mergeBinds([...head, ...tail]);
+      if (rest === null) {
+        if (v.length !== subs.length) return null;
+        return mergeBinds([...head, {}]);
+      }
+      return mergeBinds([...head, { [rest]: v.slice(subs.length) }]);
     }
     case 'rec': {
       if (v === null || typeof v !== 'object' || v instanceof Sum) return null;
@@ -372,7 +391,7 @@ export function matchPat(v, p) {
       return out;
     }
     case 'tag': {
-      if (!(v instanceof Sum) || v.__tag !== p[1]) return null;
+      if (!isSum(v) || v.__tag !== p[1]) return null;
       const subs = p[2] || [];
       if (v.__v.length !== subs.length) return null;
       return mergeBinds(subs.map((sp, i) => matchPat(v.__v[i], sp)));
@@ -390,11 +409,27 @@ function mergeBinds(parts) {
 }
 
 // --- method dispatch / registration ----------------------------------------
-const methods = Object.create(null);
+const methods = (globalThis.__tel_methods ||= Object.create(null));
 
 export function reg(name, fn) {
   methods[name] = fn;
   return fn;
+}
+
+export function hasMethod(o, name) {
+  if (o === null || o === undefined) return false;
+  if (typeof o[name] === 'function') return true;
+  const t = typeName(o);
+  return !!(methods[`${t}.${name}`] || methods[name]);
+}
+
+function isPlainObject(o) {
+  const p = Object.getPrototypeOf(o);
+  return p === Object.prototype || p === null;
+}
+
+function isTelCore(o) {
+  return Array.isArray(o) || typeof o === 'string' || (o && (o.__range || isSum(o))) || isPlainObject(o);
 }
 
 export function mcall(o, name, args) {
@@ -402,9 +437,15 @@ export function mcall(o, name, args) {
   if (o.__ns && typeof o[name] === 'function') return o[name](...args);
   if (Object.prototype.hasOwnProperty.call(o, name) && typeof o[name] === 'function') return o[name].apply(o, args);
   const t = typeName(o);
-  const f = methods[`${t}.${name}`] || methods[name];
-  if (f) return f(o, ...args);
+  const typed = methods[`${t}.${name}`];
+  const bare = methods[name];
+  if (isTelCore(o)) {
+    if (typed) return typed(o, ...args);
+    if (bare) return bare(o, ...args);
+  }
   if (typeof o[name] === 'function') return o[name].apply(o, args);
+  const f = typed || bare;
+  if (f) return f(o, ...args);
   throw new Error(`unknown method .${name} on ${t}`);
 }
 

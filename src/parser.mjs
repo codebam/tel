@@ -21,6 +21,7 @@ export function parseExpression(src, opts = {}) {
 
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '**=', '??=']);
 const MODIFIERS = new Set(['pub', 'async', 'srv', 'cli', 'web']);
+const CONTEXTUAL_IDS = new Set(['srv', 'cli', 'web', 'pub']);
 
 export class Parser {
   constructor(tokens, opts = {}) {
@@ -79,6 +80,7 @@ export class Parser {
 
   parseDeclaration() {
     if (this.atKw('import')) return this.parseImport();
+    const modSave = this.pos;
     let sawMod = false;
     const flags = { isPub: false, async: false, surface: null };
     while (MODIFIERS.has(this.peek().v)) {
@@ -89,40 +91,51 @@ export class Parser {
       else { flags.surface = m; flags.isPub = true; }
     }
     if (this.atKw('fn')) return this.parseFn(flags);
-    if (sawMod) this.fail('expected fn after modifiers');
+    if ((this.atKw('type') || this.atKw('enum')) && flags.isPub && !flags.async && !flags.surface) {
+      const t = this.parseTypeDecl();
+      t.isPub = true;
+      return t;
+    }
+    if (sawMod) this.pos = modSave; // srv/cli/web/pub used as ordinary names
     if (this.atKw('type') || this.atKw('enum')) return this.parseTypeDecl();
     return this.parseStatement();
   }
 
   parseImport() {
     const start = this.expectKw('import');
-    let file = null, path = null, alias = null, names = null;
+    let kind = null, file = null, spec = null, path = null, alias = null, names = null;
     if (this.at('str')) {
       const t = this.next();
-      file = t.parts.map((p) => (p.k === 't' ? p.v : '')).join('');
+      spec = t.parts.map((p) => (p.k === 't' ? p.v : '')).join('');
+      kind = /\.tel$/.test(spec) ? 'tel' : 'js';
+      file = spec;
+      if (this.atOp('{')) {
+        this.next();
+        names = [];
+        while (!this.atOp('}')) { names.push(this.expectName()); if (!this.eatOp(',')) break; }
+        this.expectOp('}');
+      }
     } else {
       const segs = [this.expectName('expected module path after import')];
-      while (this.atOp('.')) {
-        if (this.peek(1).t === 'op' && this.peek(1).v === '{') break;
-        this.next();
-        segs.push(this.expectName());
+      while (this.atOp('.') && !(this.peek(1).t === 'op' && this.peek(1).v === '{')) {
+        this.next(); segs.push(this.expectName());
       }
       path = segs.join('.');
+      kind = 'std';
       if (this.atOp('.') && this.peek(1).t === 'op' && this.peek(1).v === '{') {
         this.next(); this.next();
         names = [];
-        while (!this.atOp('}')) {
-          names.push(this.expectName());
-          if (!this.eatOp(',')) break;
-        }
+        while (!this.atOp('}')) { names.push(this.expectName()); if (!this.eatOp(',')) break; }
         this.expectOp('}');
       }
     }
     if (this.eatKw('as')) alias = this.expectName();
-    else if (!names && path) alias = path.split('.').pop();
-    else if (!names && file) alias = file.split('/').pop().replace(/\.tel$/, '');
-    if (!alias && !names) this.fail('import needs an alias, e.g. `import std.http as http`');
-    return { type: 'Import', path, file, alias, names, line: start.line, col: start.col };
+    else if (!names) {
+      if (kind === 'std' && path) alias = path.split('.').pop();
+      else if (spec) alias = spec.replace(/\/+$/, '').split(/[\/:]/).pop().replace(/\.(tel|js|mjs|ts|cjs)$/, '');
+    }
+    if (!alias && !names) this.fail('import needs an alias or named bindings');
+    return { type: 'Import', kind, file, spec, path, alias, names, line: start.line, col: start.col };
   }
 
   parseTypeDecl() {
@@ -296,6 +309,12 @@ export class Parser {
   }
 
   parseStatement() {
+    const startTok = this.peek();
+    const st = this.parseStatementInner();
+    return attachLoc(st, startTok);
+  }
+
+  parseStatementInner() {
     const t = this.peek();
     if (t.t === 'kw') {
       switch (t.v) {
@@ -331,6 +350,12 @@ export class Parser {
   }
 
   tryParseBinding() {
+    const startTok = this.peek();
+    const st = this.tryParseBindingInner();
+    return st ? attachLoc(st, startTok) : null;
+  }
+
+  tryParseBindingInner() {
     const save = this.pos;
     let pattern;
     try { pattern = this.parsePattern(); } catch { this.pos = save; return null; }
@@ -366,13 +391,14 @@ export class Parser {
     for (;;) {
       const save = this.pos;
       this.skipNl();
-      if (this.atKw('elif') && this.peek().col === col) {
+      const sameLine = this.pos === save;
+      if (this.atKw('elif') && (sameLine || this.peek().col === col)) {
         this.next();
         const c = this.parseExpr(0);
         elifs.push({ cond: c, body: this.parseBodyAfterColon() });
         continue;
       }
-      if (this.atKw('else') && this.peek().col === col) {
+      if (this.atKw('else') && (sameLine || this.peek().col === col)) {
         this.next();
         const elseBody = this.parseBodyAfterColon();
         return { type: 'If', cond, then, elifs, else: elseBody, line: start.line };
@@ -430,7 +456,8 @@ export class Parser {
     for (;;) {
       const save = this.pos;
       this.skipNl();
-      if (this.atKw('catch') && this.peek().col === col) { this.next(); }
+      const sameLine = this.pos === save;
+      if (this.atKw('catch') && (sameLine || this.peek().col === col)) { this.next(); }
       else { this.pos = save; break; }
       let pattern;
       if (this.atOp('{') || this.atOp('[') || this.atOp('(')) pattern = this.parsePattern();
@@ -443,7 +470,8 @@ export class Parser {
     {
       const save = this.pos;
       this.skipNl();
-      if (this.atKw('finally') && this.peek().col === col) { this.next(); fin = this.parseBodyAfterColon(); }
+      const sameLine = this.pos === save;
+      if (this.atKw('finally') && (sameLine || this.peek().col === col)) { this.next(); fin = this.parseBodyAfterColon(); }
       else this.pos = save;
     }
     if (!catches.length && !fin) this.fail('try needs catch or finally');
@@ -452,6 +480,7 @@ export class Parser {
 
   // --- expressions ----------------------------------------------------------
   parseExpr(minBp = 0) {
+    const startTok = this.peek();
     let left = this.parseUnary();
     for (;;) {
       const t = this.peek();
@@ -504,6 +533,7 @@ export class Parser {
       const right = this.parseExpr(RIGHT.has(tn) ? bp : bp + 1);
       left = { type: 'Binary', op: tn, l: left, r: right };
     }
+    attachLoc(left, startTok);
     return left;
   }
 
@@ -516,6 +546,17 @@ export class Parser {
     if (t.t === 'kw' && t.v === 'not') { this.next(); return { type: 'Unary', op: 'not', e: this.parseUnary() }; }
     if (t.t === 'kw' && t.v === 'await') { this.next(); return { type: 'Await', e: this.parseUnary() }; }
     if (t.t === 'kw' && t.v === 'spawn') { this.next(); return { type: 'Spawn', e: this.parseUnary() }; }
+    if (t.t === 'kw' && t.v === 'new') {
+      this.next();
+      let callee = this.parsePrimary();
+      while (this.atOp('.') || this.atOp('?.')) {
+        const op = this.next().v;
+        callee = { type: 'Member', obj: callee, name: this.expectName('expected member name'), optional: op === '?.' };
+      }
+      let args = [];
+      if (this.atOp('(')) { this.next(); args = this.parseCallArgs(); }
+      return this.parsePostfix({ type: 'New', callee, args, line: t.line, col: t.col });
+    }
     if (t.t === 'kw' && t.v === 'async' && this.lambdaAhead()) {
       this.next();
       return this.parseLambdaTail();
@@ -636,12 +677,12 @@ export class Parser {
       this.expectOp(']');
       return { type: 'Slice', obj, start: null, end, inclusive: inc };
     }
-    const start = this.parseExpr(0);
+    const start = this.parseExpr(46);
     this.skipSoftNl();
     if (this.atOp('..') || this.atOp('..=')) {
       const inc = this.next().v === '..=';
       let end = null;
-      if (!this.atOp(']')) end = this.parseExpr(0);
+      if (!this.atOp(']')) end = this.parseExpr(46);
       this.skipSoftNl();
       this.expectOp(']');
       return { type: 'Slice', obj, start, end, inclusive: inc };
@@ -659,6 +700,10 @@ export class Parser {
       if (t.v === 'nil') { this.next(); return { type: 'Nil' }; }
       if (t.v === 'self') { this.next(); return { type: 'Ident', name: 'self' }; }
       if (t.v === 'match') return this.parseMatch();
+    }
+    if (t.t === 'kw' && CONTEXTUAL_IDS.has(t.v)) {
+      this.next();
+      return { type: 'Ident', name: t.v };
     }
     if (t.t === 'id') {
       if (t.v === '_') { this.next(); return { type: 'Placeholder' }; }
@@ -709,8 +754,8 @@ export class Parser {
     this.expectOp('[');
     this.skipSoftNl();
     if (this.atOp(']')) { this.next(); return { type: 'Array', items: [] }; }
-    const first = this.parseExpr(0);
-    if (this.atKw('for')) {
+    const first = this.eatOp('...') ? { type: 'Spread', e: this.parseExpr(0) } : this.parseExpr(0);
+    if (first.type !== 'Spread' && this.atKw('for')) {
       const clauses = this.parseCompClauses();
       this.skipSoftNl();
       this.expectOp(']');
@@ -832,7 +877,8 @@ export class Parser {
       return { type: 'PLit', value: s };
     }
     if (t.t === 'kw' && (t.v === 'true' || t.v === 'false')) { this.next(); return { type: 'PLit', value: t.v === 'true' }; }
-    if (t.t === 'kw' && t.v === 'nil') { this.next(); return { type: 'PWild' }; }
+    if (t.t === 'kw' && t.v === 'nil') { this.next(); return { type: 'PLit', value: null }; }
+    if (t.t === 'kw' && CONTEXTUAL_IDS.has(t.v)) { this.next(); return { type: 'PBind', name: t.v }; }
     if (t.t === 'id') {
       if (t.v === '_') { this.next(); return { type: 'PWild' }; }
       const name = this.next().v;
@@ -854,14 +900,17 @@ export class Parser {
     if (t.t === 'op' && t.v === '(') {
       this.next();
       const items = [];
+      let commaSeen = false;
       this.skipSoftNl();
       while (!this.atOp(')')) {
         items.push(this.parsePattern());
         this.skipSoftNl();
         if (!this.eatOp(',')) break;
+        commaSeen = true;
         this.skipSoftNl();
       }
       this.expectOp(')');
+      if (items.length === 1 && !commaSeen) return items[0];
       return { type: 'PTuple', items };
     }
     if (t.t === 'op' && t.v === '[') {
@@ -945,7 +994,10 @@ export class Parser {
       return { type: 'TypeRecord', fields };
     }
     if (t.t === 'id' || t.t === 'kw') {
-      const name = this.next().v;
+      let name = this.next().v;
+      while (this.atOp('.') && (this.peek(1).t === 'id' || this.peek(1).t === 'kw')) {
+        this.next(); name += '.' + this.next().v;
+      }
       let args = null;
       if (this.atOp('[')) {
         this.next();
@@ -966,7 +1018,7 @@ const BP = {
   '??': 3,
   or: 10, '||': 10,
   and: 20, '&&': 20,
-  '==': 30, '!=': 30, '<': 30, '<=': 30, '>': 30, '>=': 30,
+  '==': 30, '!=': 30, '<': 30, '<=': 30, '>': 30, '>=': 30, in: 30,
   '|': 32, '^': 33, '&': 34,
   '<<': 40, '>>': 40,
   '+': 50, '-': 50,
@@ -996,4 +1048,13 @@ export function rewritePlaceholders(e) {
   const out = walk(e);
   if (!found) return e;
   return { type: 'Lambda', params: [{ name: '$0' }], body: { type: 'Block', body: [{ type: 'ExprStmt', expr: out }] } };
+}
+
+
+function attachLoc(node, tok) {
+  if (node && typeof node === 'object' && tok && node.line === undefined) {
+    node.line = tok.line;
+    node.col = tok.col;
+  }
+  return node;
 }

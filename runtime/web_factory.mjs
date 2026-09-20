@@ -1,7 +1,7 @@
 // Browser/frontend runtime: VNodes, reactive signals, DOM mount and SSR.
 // Pure factory so codegen can inline; interpreter can import it in Node too.
 export function makeWebExtra(core) {
-  const { str, truthy, eq } = core;
+  const { str, truthy, eq, isSum } = core;
 
   const SVG_TAGS = new Set(['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'text', 'defs', 'use', 'ellipse']);
 
@@ -18,7 +18,7 @@ export function makeWebExtra(core) {
   }
 
   function isAttrs(x) {
-    return x !== null && typeof x === 'object' && !Array.isArray(x) && !x.__vnode && !x.__tag && !(x instanceof core.Sum) && typeof x !== 'function';
+    return x !== null && typeof x === 'object' && !Array.isArray(x) && !x.__vnode && !x.__tag && !isSum(x) && typeof x !== 'function';
   }
 
   function h(tag, ...args) {

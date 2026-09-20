@@ -4,7 +4,7 @@
 export const KEYWORDS = new Set([
   'fn', 'type', 'enum', 'import', 'pub', 'srv', 'cli', 'web',
   'async', 'await', 'spawn', 'if', 'elif', 'else', 'for', 'in', 'while', 'loop',
-  'match', 'return', 'break', 'continue', 'throw', 'try', 'catch', 'finally',
+  'match', 'return', 'break', 'continue', 'throw', 'try', 'catch', 'finally', 'new',
   'is', 'not', 'and', 'or', 'true', 'false', 'nil', 'void', 'self', 'as', 'defer',
 ]);
 
@@ -89,12 +89,24 @@ export function lex(src, opts = {}) {
       while (j < n && (src[j] === ' ' || src[j] === '\t')) {
         colStart += src[j] === '\t' ? 4 : 1; j++;
       }
-      // blank line or comment-only line: ignore layout entirely
-      if (j >= n || src[j] === '\n' || src[j] === '\r' || src[j] === '#') {
+      // blank line: ignore layout entirely
+      if (j >= n || src[j] === '\n' || src[j] === '\r') {
         while (i < n && src[i] !== '\n') advance(src[i]);
         continue;
       }
-      advance(src.slice(i, j));
+      // block comments may span lines; line comments are comment-only lines
+      if (src[j] === '#') {
+        if (src[j + 1] === '[') {
+          advance(src.slice(i, j));
+          skipComment();
+          if (i >= n || src[i] === '\n' || src[i] === '\r') continue;
+        } else {
+          while (i < n && src[i] !== '\n') advance(src[i]);
+          continue;
+        }
+      } else {
+        advance(src.slice(i, j));
+      }
       atLineStart = false;
       const cur = indents[indents.length - 1];
       if (colStart > cur) {

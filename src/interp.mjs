@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import proc from 'node:process';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { parse } from './parser.mjs';
 import * as core from '../runtime/tel_rt.mjs';
 import { makeNodeExtra } from '../runtime/node_factory.mjs';
@@ -14,7 +16,13 @@ import * as nodeHttp from 'node:http';
 import * as nodePath from 'node:path';
 
 export class TelRuntimeError extends Error {
-  constructor(msg, loc) { super(msg); this.name = 'TelRuntimeError'; this.loc = loc; }
+  constructor(msg, loc) {
+    super(msg);
+    this.name = 'TelRuntimeError';
+    this.loc = loc && typeof loc === 'object' && Number.isInteger(loc.line)
+      ? { line: loc.line, col: loc.col }
+      : (loc ?? null);
+  }
 }
 class ReturnSignal { constructor(v) { this.value = v; } }
 class BreakSignal {}
@@ -84,6 +92,15 @@ export function makeBuiltins(opts = {}) {
     ...(nodeExtra.fs ? { fs: nodeExtra.fs, http: nodeExtra.http, env: nodeExtra.env, time: nodeExtra.time } : {}),
   };
   const builtins = { ...core, ...webExtra, ...(nodeExtra.fs ? nodeExtra : {}) };
+  // JavaScript standard library globals, so interop feels like JS.
+  const JS_GLOBALS = ['Object', 'Array', 'String', 'Number', 'Boolean', 'BigInt', 'Symbol', 'Math', 'JSON',
+    'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise', 'Error', 'TypeError', 'RangeError',
+    'SyntaxError', 'URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder', 'Intl', 'Proxy', 'Reflect',
+    'structuredClone', 'fetch', 'console', 'process', 'Buffer', 'setTimeout', 'clearTimeout', 'setInterval',
+    'clearInterval', 'queueMicrotask'];
+  for (const g of JS_GLOBALS) {
+    if (typeof globalThis[g] !== 'undefined') builtins[g] = globalThis[g];
+  }
   delete builtins.Sum; delete builtins.Early; delete builtins.Range;
   builtins.std = std;
   builtins.args = opts.args ?? [];
@@ -133,12 +150,19 @@ export class Runtime {
   }
 
   finishCall(gen, isAsync) {
+    const settle = (e) => {
+      if (e instanceof ReturnSignal) return { v: e.value };
+      if (e instanceof core.Early) return { v: e.value };
+      return null;
+    };
     if (isAsync) {
       return (async () => {
-        try { return await runAsync(gen); } catch (e) { if (e instanceof core.Early) return e.value; throw e; }
+        try { return await runAsync(gen); }
+        catch (e) { const r = settle(e); if (r) return r.v; throw e; }
       })();
     }
-    try { return runSync(gen); } catch (e) { if (e instanceof core.Early) return e.value; throw e; }
+    try { return runSync(gen); }
+    catch (e) { const r = settle(e); if (r) return r.v; throw e; }
   }
 
   *callUserGen(decl, args, closure) {
@@ -179,6 +203,8 @@ export class Runtime {
         env.define(st.name, fn);
         if (st.recvType) {
           core.reg(`${st.recvType}.${st.name}`, fn);
+          core.reg(st.name, fn);
+        } else {
           core.reg(st.name, fn);
         }
       }
@@ -287,7 +313,7 @@ export class Runtime {
           throw new TelRuntimeError(`interpreter: cannot execute ${st.type}`, st);
       }
     } catch (e) {
-      if (e instanceof TelRuntimeError && !e.loc) e.loc = { line: st.line, col: st.col };
+      if (e instanceof Error && !e.loc && st.line !== undefined) e.loc = { line: st.line, col: st.col };
       throw e;
     }
   }
@@ -376,11 +402,10 @@ export class Runtime {
 
   // -- imports ---------------------------------------------------------------
   *execImport(st, env, fromFile = this.currentFile) {
-    let source = null;
-    if (st.path && st.path.startsWith('std')) {
+    if (st.kind === 'std' || (st.path && st.path.startsWith('std'))) {
       const std = this.globalEnv.get('std');
       const segs = st.path.split('.').slice(1);
-      source = segs.length ? segs.reduce((o, s) => (o ? o[s] : undefined), std) : std;
+      const source = segs.length ? segs.reduce((o, s) => (o ? o[s] : undefined), std) : std;
       if (st.names) {
         for (const n of st.names) {
           const v = st.path === 'std' ? std[n] : (source && source[n]);
@@ -388,6 +413,47 @@ export class Runtime {
           env.define(n, v);
         }
       } else if (st.alias) env.define(st.alias, source);
+      return;
+    }
+    if (st.kind === 'js') {
+      const spec = st.spec;
+      const baseFile = fromFile || path.join(proc.cwd(), 'index.mjs');
+      let href = spec;
+      if (spec.startsWith('node:')) href = spec;
+      else if (spec.startsWith('.') || spec.startsWith('/')) {
+        href = pathToFileURL(path.resolve(path.dirname(baseFile), spec)).href;
+      } else {
+        try {
+          const require = createRequire(pathToFileURL(baseFile));
+          href = pathToFileURL(require.resolve(spec)).href;
+        } catch { /* fall through: let Node try the bare specifier */ }
+      }
+      let mod;
+      try { mod = yield import(href); }
+      catch (e) { throw new TelRuntimeError(`cannot import '${spec}': ${e.message}`, st); }
+      if (st.names) {
+        for (const n of st.names) {
+          if (!(n in mod)) throw new TelRuntimeError(`module '${spec}' has no export '${n}'`, st);
+          env.define(n, mod[n]);
+        }
+      }
+      if (st.alias) {
+        let ns = mod.default !== undefined ? mod.default : mod;
+        // hydrate default with named exports so `<alias>.name` works for both
+        // CJS-style defaults (express) and ESM modules with default + named.
+        if (ns && (typeof ns === 'object' || typeof ns === 'function')) {
+          for (const k of Object.keys(mod)) {
+            if (k === 'default' || k in ns) continue;
+            try { ns[k] = mod[k]; } catch { /* frozen default: ignore */ }
+          }
+          if (Object.isExtensible(ns)) {
+            try { Object.defineProperty(ns, '__ns', { value: true, enumerable: false }); } catch { /* ignore */ }
+          }
+        } else {
+          ns = mod;
+        }
+        env.define(st.alias, ns);
+      }
       return;
     }
     const base = fromFile ? path.dirname(fromFile) : proc.cwd();
@@ -416,12 +482,18 @@ export class Runtime {
       this.currentFile = prevFile;
     }
     const programs = program.body;
-    const pubFns = programs.filter((s) => s.type === 'FnDecl' && s.isPub).map((s) => s.name);
-    const anyPub = pubFns.length > 0 || programs.some((s) => s.type === 'FnDecl' && s.isPub);
+    const pubNames = programs.filter((s) => (s.type === 'FnDecl' || s.type === 'TypeDecl') && s.isPub).map((s) => s.name);
+    const anyPub = pubNames.length > 0;
     const exports = {};
     for (const st of programs) {
       if (st.type === 'FnDecl' && (!anyPub || st.isPub)) exports[st.name] = env.get(st.name, st);
-      if (st.type === 'TypeDecl' && (!anyPub || st.isPub)) { const v = env.lookup(st.name); if (v.found) exports[st.name] = v.value; }
+      if (st.type === 'TypeDecl' && (!anyPub || st.isPub)) {
+        if (st.kind === 'union') {
+          for (const v of st.variants) { const b = env.lookup(v.name); if (b.found) exports[v.name] = b.value; }
+        } else {
+          const v = env.lookup(st.name); if (v.found) exports[st.name] = v.value;
+        }
+      }
     }
     const namespace = { ...exports };
     Object.defineProperty(namespace, '__ns', { value: true, enumerable: false });
@@ -435,7 +507,7 @@ export class Runtime {
     try {
       return yield* this.evInner(e, env);
     } catch (err) {
-      if (err instanceof TelRuntimeError && !err.loc && e && e.line) err.loc = { line: e.line, col: e.col };
+      if (err instanceof Error && !err.loc && e && e.line !== undefined) err.loc = { line: e.line, col: e.col };
       throw err;
     }
   }
@@ -486,8 +558,8 @@ export class Runtime {
       case 'MapComp': {
         const out = {};
         yield* this.evalComprehension(e.clauses, 0, env, function* (rt, child) {
-          const k = yield* rt.ev(e.key, child);
-          out[core.str(k)] = yield* rt.ev(e.value, child);
+          const k = typeof e.key === 'string' ? e.key : core.str(yield* rt.ev(e.key, child));
+          out[k] = yield* rt.ev(e.value, child);
         });
         return out;
       }
@@ -503,7 +575,13 @@ export class Runtime {
           const v = o[e.name];
           return typeof v === 'function' ? v.bind(o) : v;
         }
-        return (...args) => core.mcall(o, e.name, args);
+        if (e.name in Object(o)) {
+          const v = o[e.name]; // prototype getters and native methods
+          if (typeof v === 'function') return (...args) => core.mcall(o, e.name, args);
+          return v;
+        }
+        if (core.hasMethod(o, e.name)) return (...args) => core.mcall(o, e.name, args);
+        return null;
       }
       case 'Index': {
         const o = yield* this.ev(e.obj, env);
@@ -550,6 +628,12 @@ export class Runtime {
       }
       case 'IsType': return core.isType(yield* this.ev(e.value, env), typeNameOf(e.of));
       case 'Assign': return yield* this.assign(e.target, e.op, e.value, env);
+      case 'New': {
+        const fn = yield* this.ev(e.callee, env);
+        if (typeof fn !== 'function') throw new TelRuntimeError(`${exprName(e.callee)} is not a constructor`, e);
+        const { args } = yield* this.evalArgs(e.args, env);
+        return Reflect.construct(fn, args);
+      }
       default:
         throw new TelRuntimeError(`interpreter: cannot evaluate ${e.type}`, e);
     }
@@ -600,15 +684,20 @@ export class Runtime {
     }
   }
 
-  *evalCall(e, env) {
+  *evalArgs(argNodes, env) {
     const named = {};
     const args = [];
     let hasNamed = false;
-    for (const a of e.args) {
+    for (const a of argNodes) {
       if (a.name) { hasNamed = true; named[a.name] = yield* this.ev(a.value, env); }
       else if (a.spread) args.push(...core.iter(yield* this.ev(a.value, env)));
       else args.push(yield* this.ev(a.value, env));
     }
+    return { args, named, hasNamed };
+  }
+
+  *evalCall(e, env) {
+    const { args, named, hasNamed } = yield* this.evalArgs(e.args, env);
     const namedObj = hasNamed ? named : undefined;
 
     if (e.callee.type === 'Member') {
@@ -650,7 +739,13 @@ export class Runtime {
     const prev = this.currentFile;
     if (file) this.currentFile = path.resolve(file);
     try {
-      const value = await runAsync(this.execStatements(program.body, target, { hoist: true }));
+      let value;
+      try {
+        value = await runAsync(this.execStatements(program.body, target, { hoist: true }));
+      } catch (e) {
+        if (e instanceof core.Early) throw new TelRuntimeError(`unhandled ${core.repr(e.value)} propagated by ?`, null);
+        throw e;
+      }
       return { program, env: target, value };
     } finally { this.currentFile = prev; }
   }
@@ -663,8 +758,16 @@ export class Runtime {
     this.currentFile = abs;
     const mod = { path: abs, env, exports: {}, namespace: {}, program };
     this.moduleCache.set(abs, mod);
-    const value = await runAsync(this.execStatements(program.body, env, { hoist: true }));
-    const main = env.lookup('main');
+    let value;
+    try {
+      value = await runAsync(this.execStatements(program.body, env, { hoist: true }));
+    } catch (e) {
+      if (e instanceof core.Early) throw new TelRuntimeError(`unhandled ${core.repr(e.value)} propagated by ?`, null);
+      throw e;
+    }
+    const main = Object.prototype.hasOwnProperty.call(env.vars, 'main')
+      ? { found: true, value: env.vars.main }
+      : { found: false };
     let mainResult = value;
     if (main.found && typeof main.value === 'function') {
       const a = (args || []).map((x) => x);
