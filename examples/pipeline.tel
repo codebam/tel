@@ -1,0 +1,57 @@
+# Tel collection pipelines: UFCS dot chains, comprehensions, groupBy, zip.
+# Run: node bin/tel.mjs run examples/pipeline.tel
+
+type Dev = {name: Str, team: Str, commits: Num, stars: Num}
+
+devs = [
+  Dev("ada", "core", 128, 95),
+  Dev("bob", "web", 74, 31),
+  Dev("cyd", "core", 51, 12),
+  Dev("dee", "data", 93, 67),
+  Dev("eve", "web", 22, 8),
+  Dev("fay", "data", 61, 44),
+]
+
+fn Dev.slug(self: Dev) -> Str = lower(self.name)
+fn Dev.summary(self: Dev) -> Str = "{self.slug()}: {self.commits}c/{self.stars}s"
+
+print("== where / filter ==")
+active = [d for d in devs if d.commits >= 50]
+print("active:", active.map(_.slug()).sort().join(", "))
+
+print("== map / reduce / sort ==")
+print("core commits:", devs.filter(_.team == "core").map(_.commits).sum())
+print("top 3:", devs.sortBy(_.commits).reverse().take(3).map(_.name).join(", "))
+print("average commits:", floor(devs.map(_.commits).sum() / devs.len()))
+
+print("== group / aggregate ==")
+byTeam = devs.groupBy(_.team)
+for team in byTeam.keys().sort():
+  members = byTeam[team]
+  print("team {team}: {members.len()} devs, {members.map(_.commits).sum()} commits")
+
+print("== zip / enumerate / chunk ==")
+for pair in zip(devs.map(_.name), devs.map(_.stars)):
+  print("  {pair[0]} has {pair[1]} stars")
+print("chunked:", devs.map(_.name).chunk(3).map(_.join("/")).join(" | "))
+
+print("== comprehensions ==")
+squares = [n * n for n in 1..=8 if n % 2 == 0]
+grid = [x * y for x in [1, 2, 3] for y in [10, 100]]
+labels = ["{d.name}:{d.commits}" for d in devs if d.stars > 20]
+print("even squares:", squares)
+print("grid:", grid)
+print("labels:", labels)
+
+print("== pipeline operator ==")
+selected = devs |> filter(_.commits >= 60) |> sortBy(_.name) |> map(_.name) |> join(", ")
+print("selected:", selected)
+print("summaries:", devs.take(2).map(_.summary()).join("; "))
+
+print("== set-ish helpers ==")
+print("teams:", devs.map(_.team).uniq().sort())
+print("flattened:", flat([[1, 2], [3], [4, 5]], 2))
+print("some/every/count:", devs.some(_.stars > 50), devs.every(_.commits > 0), devs.count(_.team == "core"))
+
+fn main():
+  print("pipeline complete")

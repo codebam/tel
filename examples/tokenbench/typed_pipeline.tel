@@ -1,0 +1,6 @@
+type Order = {id: Str, total: Num, paid: Bool}
+orders = [Order("a", 12, true), Order("b", 30, false), Order("c", 7, true)]
+fn summarize(os: [Order]) -> Str:
+  paid = os.filter(_.paid).map(_.total).sum()
+  "{os.len()} orders, {paid} paid"
+print(summarize(orders))

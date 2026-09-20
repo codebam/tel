@@ -1,0 +1,5 @@
+type User = {name: Str, age: Num}
+users = [User("ada", 36), User("bob", 17), User("cyd", 24)]
+adults = users.filter(_.age >= 18).sortBy(_.name)
+print(adults.map(u => "{u.name}:{u.age}").join(", "))
+print(users.map(_.age).sum())

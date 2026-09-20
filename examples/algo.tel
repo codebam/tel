@@ -1,0 +1,115 @@
+# Tel algorithms: recursion, merge sort, quicksort, binary search, sum types.
+# Run: node bin/tel.mjs run examples/algo.tel
+
+print("== recursion ==")
+fn fact(n: Num) -> Num:
+  if n <= 1:
+    1
+  else:
+    n * fact(n - 1)
+
+fn fib(n: Num) -> Num:
+  if n < 2:
+    n
+  else:
+    fib(n - 1) + fib(n - 2)
+
+print("fact(6) =", fact(6), "| fib(10) =", fib(10))
+
+print("== merge sort ==")
+fn merge(a, b):
+  out = []
+  i = 0
+  j = 0
+  while i < a.len() and j < b.len():
+    if a[i] <= b[j]:
+      out.push(a[i])
+      i += 1
+    else:
+      out.push(b[j])
+      j += 1
+  while i < a.len():
+    out.push(a[i])
+    i += 1
+  while j < b.len():
+    out.push(b[j])
+    j += 1
+  out
+
+fn msort(xs):
+  n = xs.len()
+  if n <= 1:
+    xs
+  else:
+    mid = floor(n / 2)
+    merge(msort(xs[..mid]), msort(xs.drop(mid)))
+
+data = [9, 1, 8, 2, 7, 3, 6, 4, 5, 0]
+print("input: ", data)
+print("sorted:", msort(data))
+
+print("== quicksort with match ==")
+fn qsort(xs):
+  match xs:
+    [p, ...rest]:
+      lo = [x for x in rest if x < p]
+      hi = [x for x in rest if x >= p]
+      flat([qsort(lo), [p], qsort(hi)])
+    _: []
+
+print("qsort: ", qsort([5, 3, 8, 1, 9, 2, 7]))
+
+print("== binary search ==")
+fn bsearch(xs, target):
+  lo = 0
+  hi = xs.len() - 1
+  while lo <= hi:
+    mid = floor((lo + hi) / 2)
+    if xs[mid] == target:
+      return mid
+    elif xs[mid] < target:
+      lo = mid + 1
+    else:
+      hi = mid - 1
+  return -1
+
+ordered = msort(data)
+print("find 7: ", bsearch(ordered, 7))
+print("find 99:", bsearch(ordered, 99))
+
+print("== sum type: Tree ==")
+type Tree = Leaf(v: Num) | Node(l: Tree, r: Tree)
+
+fn total(t):
+  match t:
+    Leaf(v): v
+    Node(l, r): total(l) + total(r)
+
+fn depth(t):
+  match t:
+    Leaf(v): 1
+    Node(l, r): 1 + max([depth(l), depth(r)])
+
+fn leaves(t):
+  match t:
+    Leaf(v): [v]
+    Node(l, r): flat([leaves(l), leaves(r)])
+
+tree = Node(Leaf(1), Node(Node(Leaf(2), Leaf(3)), Leaf(4)))
+print("total =", total(tree), "| depth =", depth(tree), "| leaves =", leaves(tree))
+
+print("== sum type: Shape ==")
+type Shape = Circle(r: Num) | Rect(w: Num, h: Num) | Triangle(b: Num, h: Num)
+
+fn area(s):
+  match s:
+    Circle(r): 3 * r * r
+    Rect(w, h): w * h
+    Triangle(b, h): b * h / 2
+
+shapes = [Circle(2), Rect(3, 4), Triangle(6, 5)]
+print("areas:   ", shapes.map(area))
+print("area sum:", shapes.map(area).sum())
+
+fn main():
+  print("algo complete")

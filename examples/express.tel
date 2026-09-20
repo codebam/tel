@@ -1,0 +1,14 @@
+# Optional npm interop example: uses express only when it is installed.
+# Requires: npm install express
+# Run: node bin/tel.mjs run examples/express.tel   (prints skip when absent)
+import "node:module" {createRequire} as mod
+import "node:path" as path
+
+try:
+  require = createRequire(path.join(env.cwd(), "index.js"))
+  express = require("express")
+  app = express()
+  app.get("/health", (req, res) => res.json({ok: true}))
+  print("express loaded; /health route registered")
+catch e:
+  print("express not installed; skipped ({e.message})")

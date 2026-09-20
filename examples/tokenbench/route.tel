@@ -1,0 +1,11 @@
+fn route(method: Str, path: Str, query: [Str: Str]):
+  if method != "GET": return {"status": 405, "body": {"error": "method"}}
+  match path:
+    "/health": {"status": 200, "body": {"ok": true}}
+    "/sum":
+      n = int(query["n"] ?? "0")
+      {"status": 200, "body": {"sum": 0 if n <= 0 else (1..=n).sum()}}
+    _: {"status": 404, "body": {"error": "not found"}}
+print(json.stringify(route("GET", "/health", {})))
+print(json.stringify(route("GET", "/sum", {"n": "5"})))
+print(json.stringify(route("POST", "/", {})))

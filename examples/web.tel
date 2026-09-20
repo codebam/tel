@@ -1,0 +1,10 @@
+# Tel frontend: a signal-backed counter using the call-style view DSL.
+# Build for the browser with: tel build examples/web.tel --target web
+# Build/SSR in Node with:    tel build examples/web.tel --target web
+# Top-level bindings in a `web fn` become signals in web target output; reads
+# re-render and `n += 1` inside an event handler updates the DOM.
+web fn App():
+  n = 0
+  div(class="app",
+    h1("Counter ", n),
+    button(onclick=() => n += 1, "+"))

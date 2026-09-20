@@ -1,0 +1,6 @@
+data = '{"id": 1, "name": "item"}'
+async fn load(raw: Str):
+  await time.sleep(0)
+  json.parse(raw) ?? nil
+a = await load(data)
+print(a.name)

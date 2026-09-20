@@ -1,0 +1,85 @@
+# Tel basics: functions, records, unions + match, collections, ranges, errors.
+# Run: node bin/tel.mjs run examples/basics.tel
+
+print("== functions ==")
+
+# Expression bodies use `=`, block bodies use `:` + indentation.
+fn add(a: Num, b: Num) -> Num = a + b
+
+fn describe(n: Num) -> Str:
+  if n % 2 == 0:
+    "even"
+  else:
+    "odd"
+
+print("add(2, 3) =", add(2, 3))
+print("describe(7) =", describe(7))
+
+print("== records and methods ==")
+
+type Point = {x: Num, y: Num}
+
+# `Type.method(self, ...)` registers a UFCS method; `p.norm2()` also works.
+fn Point.norm2(self: Point) -> Num = self.x * self.x + self.y * self.y
+
+p = Point(x=3, y=4)
+q = Point(1, 2)
+print("p =", p)
+print("p.norm2() =", p.norm2(), "norm2(q) =", norm2(q))
+print("point sums as strings: ({p.x}, {p.y}) and ({q.x}, {q.y})")
+
+print("== unions and match ==")
+
+type Shape = Circle(r: Num) | Rect(w: Num, h: Num)
+
+fn area(s: Shape) -> Num:
+  match s:
+    Circle(r): 3 * r * r
+    Rect(w, h): w * h
+
+print("area(Circle(2)) =", area(Circle(r=2)))
+print("area(Rect(3, 4)) =", area(Rect(3, 4)))
+
+print("== collections, `_` lambdas, dot chains ==")
+
+xs = [5, 3, 8, 1, 9, 2, 7]
+print("xs =", xs)
+print("filtered/sorted =", xs.filter(_ > 2).sort())
+print("doubled =", xs.map(_ * 2))
+print("sum =", xs.sum(), "min =", xs.min(), "max =", xs.max())
+print("total over 3 =", xs.filter(_ > 3).reduce(0, (a, b) => a + b))
+
+squares = [x * x for x in 1..=6 if x % 2 == 0]
+print("even squares =", squares)
+
+print("== ranges and for ==")
+
+total = 0
+for i in 1..=5:
+  total += i
+print("1..=5 total =", total)
+for i in 3..0:
+  print("countdown", i)
+
+print("== errors, ?, ?? ==")
+
+fn half(n: Num) -> Result:
+  if n % 2 != 0:
+    Err("cannot halve {n}")
+  else:
+    Ok(n / 2)
+
+fn halfTwice(n: Num):
+  h = half(n)?
+  h / 2
+
+print("halfTwice(8) =", halfTwice(8))
+print("halfTwice(3) =", halfTwice(3))
+print("fallbacks =", nil ?? "nil-fallback", Err("no") ?? 0, Ok(9) ?? 0)
+
+try:
+  throw "boom"
+catch e:
+  print("caught:", e)
+finally:
+  print("finally runs")

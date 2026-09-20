@@ -1,0 +1,159 @@
+# Tel syntax tour: a deterministic walk over the v0.1 surface.
+# Run: node bin/tel.mjs run examples/tour.tel
+
+import std.{json, math}
+
+sections = 0
+
+print("== lexical ==")
+# Line comments start with #; block comments nest with #[ ... ]#.
+print("layout is Python-style")  #[
+  block comments may span lines when they start after code;
+  use line comments on their own lines instead
+]#
+single = 'single quotes do not interpolate {this}'
+double = "double quotes do: 1 + 2 = {1 + 2}"
+triple = """triple quotes
+span lines"""
+print(single, "|", double, "|", triple)
+print("numbers:", 42, 0xff, 0b1010, 1_000, 2.5, .25, 1e3)
+print("escapes:", "tab[\t] brace[\{] unicode[\u03bb]")
+sections += 1
+
+print("== bindings ==")
+a = 10             # ambient binding
+a += 5             # compound assignment
+a *= 2
+a ??= 0
+scoped: Str = "local annotation"   # annotated binding is local to the block
+print("a =", a, "|", scoped)
+sections += 1
+
+print("== functions and lambdas ==")
+fn inc(x: Num) -> Num = x + 1
+fn addAll(...xs: Num) -> Num:
+  total = 0
+  for x in xs: total += x
+  total
+fn makeAdder(k):
+  (x) => x + k
+add5 = makeAdder(5)
+print("inc(41) =", inc(41), "| addAll(1,2,3,4) =", addAll(1, 2, 3, 4))
+print("lambdas:", add5(10), (x => x * x)(6), ((p, q) => p + q)(2, 3))
+print("placeholders:", [1, 2, 3, 4].filter(_ % 2 == 0).map(_ * 10))
+sections += 1
+
+print("== control flow ==")
+grade = ""
+if a > 100:
+  grade = "huge"
+elif a > 20:
+  grade = "large"
+else:
+  grade = "small"
+i = 0
+while i < 3:
+  i += 1
+loops = 0
+loop:
+  loops += 1
+  if loops >= 3: break
+odds = []
+for n in [1, 2, 3, 4, 5]:
+  if n % 2 == 0: continue
+  odds.push(n)
+print("grade =", grade, "| i =", i, "| loops =", loops, "| odds =", odds)
+sections += 1
+
+print("== operators ==")
+print("arith:", 1 + 2 * 3 - 4 / 2, 2 ** 10)
+print("compare/logic:", 1 < 2 and 3 >= 3 and not false)
+print("bitwise:", (5 & 3) | (8 ^ 1) << 2)
+print("ternary:", "yes" if a > 0 else "no")
+print("range:", [n for n in 1..=4])
+print("pipeline:", [3, 1, 2] |> sort |> reverse)
+print("fallback:", nil ?? "default")
+sections += 1
+
+print("== collections ==")
+xs = [3, 1, 2]
+ys = [x * 10 for x in xs if x != 2]
+merged = {...{"one": 1, "two": 2}, "three": 3}
+tup = (1, "two", true)
+print("xs =", xs, "| ys =", ys)
+print("index/slice:", xs[0], xs[-1], xs[..2], merged["two"], tup[1])
+print("chains:", xs.sort().map(_ + 1).join("-"))
+print("record keys:", merged.keys().sort())
+sections += 1
+
+print("== match ==")
+type Shape = Circle(r: Num) | Rect(w: Num, h: Num) | Dot
+fn shapeName(s):
+  match s:
+    Circle(r): "circle r={r}"
+    Rect(w, h): "rect {w}x{h}"
+    Dot: "dot"
+    1 | 2: "literal one or two"
+    _: "unknown"
+fn headTail(xs):
+  match xs:
+    [h, ...t]: "head {h}, tail {t}"
+    _: "empty"
+fn describePair(t):
+  match t:
+    (k, v) if k == "x": "x -> {v}"
+    (k, v): "{k} -> {v}"
+print(shapeName(Circle(r=2)), "|", shapeName(Dot), "|", shapeName(2))
+print(headTail([1, 2, 3]), "|", headTail([]))
+print(describePair(("x", 9)), "|", describePair(("y", 9)))
+sections += 1
+
+print("== types ==")
+type Pair = (Num, Str)
+type NumList = [Num]
+type Scores = [Str: Num]
+type Fn2 = (Num, Num) -> Num
+type Box[T] = {v: T}
+enum Color = Red | Green | Blue
+fn firstOf(p: Pair) = p[0]
+b = Box(v=7)
+print("aliases/generics:", firstOf((4, "four")), b.v, Red, Blue)
+sections += 1
+
+print("== errors and propagation ==")
+fn checked(s: Str):
+  n = int(s)
+  if n < 0:
+    Err("negative: {n}")
+  else:
+    Ok(n)
+fn doubled(s: Str):
+  n = checked(s)?
+  n * 2
+print("checked:", doubled("4"), doubled("-1"))
+try:
+  throw "tour error"
+catch e:
+  print("caught:", e)
+finally:
+  print("finally")
+sections += 1
+
+print("== runtime and async ==")
+print("json:", json.parse('{"ok": true}') ?? "bad")
+print("math:", math.floor(3.9), math.max([2, 9]))
+async fn delayedSquare(n: Num):
+  await time.sleep(0)
+  n * n
+async fn gather():
+  task = spawn delayedSquare(5)
+  await task
+print("async:", await delayedSquare(6), "| spawn:", await gather())
+fn deferred():
+  defer print("defer runs first")
+  "deferred body value"
+print(deferred())
+sections += 1
+
+fn main():
+  print("tour complete:", sections, "sections")

@@ -1,0 +1,11 @@
+import std.http as http
+async fn handle(req):
+  match req.path:
+    "/health": {"ok": true}
+    "/sum":
+      n = int(req.query.n ?? "0")
+      {"n": n, "sum": 0 if n <= 0 else (1..=n).sum()}
+    _: http.res(404, "not found")
+async fn main():
+  server = await http.serve(int(env.get("PORT", "0")), req => handle(req))
+  server

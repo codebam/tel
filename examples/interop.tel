@@ -1,0 +1,25 @@
+# Tel <-> JS interop using only Node builtins (guaranteed runnable).
+# Run: node bin/tel.mjs run examples/interop.tel
+import "node:path" {join, basename, extname} as path
+import "node:url" {pathToFileURL, fileURLToPath} as url
+import "node:fs/promises" as fsp
+
+async fn main():
+  p = join("examples", "tokenbench", "fizzbuzz.tel")
+  u = pathToFileURL(p)
+  print("path:", p)
+  print("name:", basename(p), "| ext:", extname(p))
+  print("url: ", u.toString())
+  print("back:", fileURLToPath(u))
+
+  d = new Date(0)
+  m = new Map()
+  m.set("answer", 42)
+  print("date:", d.toISOString(), "| map:", m.get("answer"))
+
+  params = new URLSearchParams("a=1&b=2")
+  params.forEach((v, k) => print("param {k}={v}"))
+
+  pkg = join(env.cwd(), "package.json")
+  text = await fsp.readFile(pkg, "utf8")
+  print("package.json:", text.len(), "chars")

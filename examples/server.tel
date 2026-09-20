@@ -1,0 +1,23 @@
+# Tel JSON API. Port comes from PORT or the first CLI arg; 0 picks a free port.
+#   PORT=8080 tel run examples/server.tel
+#   tel run examples/server.tel -- 8080
+#   curl 'http://127.0.0.1:8080/sum?n=100'
+import std.http as http
+
+async fn handle(req):
+  match req.path:
+    "/":
+      {name: "tel", version: "0.2", routes: ["/health", "/sum?n=..."]}
+    "/health":
+      {ok: true}
+    "/sum":
+      n = int(req.query.n ?? "0")
+      {n: n, sum: 0 if n <= 0 else (1..=n).sum()}
+    _:
+      http.res(404, "not found")
+
+async fn main():
+  port = int(env.get("PORT", args[0] ?? "0"))
+  server = await http.serve(port, req => handle(req))
+  print("tel api listening on http://127.0.0.1:{server.port}")
+  server
