@@ -129,13 +129,18 @@ export class Parser {
         this.expectOp('}');
       }
     }
-    if (this.eatKw('as')) alias = this.expectName();
+    let ns = false;
+    if (this.eatOp('*')) {
+      this.expectKw('as', 'expected `as` after * in import');
+      alias = this.expectName('expected namespace name');
+      ns = true;
+    } else if (this.eatKw('as')) alias = this.expectName();
     else if (!names) {
       if (kind === 'std' && path) alias = path.split('.').pop();
       else if (spec) alias = spec.replace(/\/+$/, '').split(/[\/:]/).pop().replace(/\.(tel|js|mjs|ts|cjs)$/, '');
     }
     if (!alias && !names) this.fail('import needs an alias or named bindings');
-    return { type: 'Import', kind, file, spec, path, alias, names, line: start.line, col: start.col };
+    return { type: 'Import', kind, file, spec, path, alias, names, ns, line: start.line, col: start.col };
   }
 
   parseTypeDecl() {

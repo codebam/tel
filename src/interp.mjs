@@ -437,6 +437,7 @@ export class Runtime {
           env.define(n, mod[n]);
         }
       }
+      if (st.alias && st.ns) { env.define(st.alias, mod); return; }
       if (st.alias) {
         let ns = mod.default !== undefined ? mod.default : mod;
         // hydrate default with named exports so `<alias>.name` works for both
@@ -716,12 +717,7 @@ export class Runtime {
       throw new TelRuntimeError(`'${exprName(e.callee)}' is ${got}, not a function`, e);
     }
     if (hasNamed) {
-      if (fn.__telKind === 'record') {
-        const out = {};
-        for (const f of fn.__fields) out[f] = named[f] === undefined ? null : named[f];
-        for (const [k, v] of Object.entries(named)) if (!(k in out)) out[k] = v;
-        return core.rec(fn.name || 'Record', out);
-      }
+      if (fn.__telKind === 'record') return fn(named); // ctor tags __t correctly
       if (fn.__telKind === 'variant') return fn(named);
       args.unshift(named);
     }
